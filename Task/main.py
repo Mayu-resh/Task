@@ -23,22 +23,25 @@ app.secret_key = '1a2b3c4d5e'
 def login():
     msg = ''
     if request.method == 'POST' and 'username' in request.form and 'password' in request.form:
-        # Create variables for easy access
         username = request.form['username']
         password = request.form['password']
-        client = boto3.client('cognito-idp', region_name='us-west-2', aws_access_key_id=ACCESS_ID,
-        aws_secret_access_key= ACCESS_KEY)
-        resp,msg = initiate_auth(client, username, password)
-        if resp.get("AuthenticationResult"):
-            session['loggedin'] = True
-            token = resp["AuthenticationResult"]["AccessToken"]
-            session['id']=token
-            session['username'] = username
-            msg='Login successfully'
-            return redirect(url_for('home'))
-        else:
-            # Account doesnt exist or username/password incorrect
-            msg = 'Incorrect username/password!'
+        try:
+            client = boto3.client('cognito-idp', region_name='us-west-2', aws_access_key_id=ACCESS_ID,aws_secret_access_key= ACCESS_KEY)
+            resp,msg = initiate_auth(client, username, password)
+            if resp.get("AuthenticationResult"):
+                session['loggedin'] = True
+                token = resp["AuthenticationResult"]["AccessToken"]
+                session['id']=token
+                session['username'] = username
+                msg='Login successfully'
+                return redirect(url_for('home'))
+        except client.exceptions.NotAuthorizedException:
+             msg = "The username or password is incorrect"
+        except client.exceptions.UserNotConfirmedException:
+             msg= "User is not confirmed"
+        except Exception as e:
+             msg = e
+        
     return render_template('index.html', msg=msg)
 
 
@@ -51,48 +54,53 @@ def register():
         email = request.form['email']
         if not re.match(r'[^@]+@[^@]+\.[^@]+', email):
             msg = 'Invalid email address!'
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!#%*?&]{6,20}$', password):
+            msg = 'Password should have Caps, Special characters, Numbers and length of 8'
         elif not re.match(r'[A-Za-z0-9]+', username):
             msg = 'Username must contain only characters and numbers!'
         elif not username or not password or not email:
             msg = 'Please fill out the form!'
         else:
-            client = boto3.client('cognito-idp', region_name='your region name')
-            response = client.sign_up(
-                ClientId=CLIENT_ID,
-                SecretHash=get_secret_hash(username),
-                Username=username,
-                Password=password,
-               UserAttributes=[
-                       {
-                               'Name': "name",
-                               'Value': username
-                    },
-                    {
-                            'Name': "email",
-                            'Value': email
-                    }
-            ],
-            ValidationData=[
-                {
-                'Name': "email",
-                'Value': email
-            },
-            {
-                'Name': "custom:username",
-                'Value': username
-            }
+            try:
+                client = boto3.client('cognito-idp', region_name='us-west-2')
+                response = client.sign_up(
+                        ClientId=CLIENT_ID,
+                        SecretHash=get_secret_hash(username),
+                        Username=username,
+                        Password=password,
+                        UserAttributes=[
+                                {
+                                        'Name': "name",
+                                        'Value': username
+                                },
+                                {
+                                        'Name': "email",
+                                        'Value': email
+                                }
+                                        ],
+                        ValidationData=[
+                                {
+                                        'Name': "email",
+                                        'Value': email
+                                 },
+                                 {
+                                         'Name': "custom:username",
+                                         'Value': username
+                                 }
                                 ],
                 AnalyticsMetadata={ 'AnalyticsEndpointId': 'string'},
                 UserContextData={ 'EncodedData': 'string'},
                 ClientMetadata={'string': 'string' }
                 )
-
-            msg = 'You have successfully registered!'
-            return redirect(url_for('ConfirmReg'))
+                msg = 'You have successfully registered!'
+                return redirect(url_for('ConfirmReg'))
+            except client.exceptions.UsernameExistsException as e:
+                msg = 'This username already exists'
+            except Exception as e:
+                msg = e
+                
     elif request.method == 'POST':
-        # Form is empty... (no POST data)
         msg = 'Please fill out the form!'
-    # Show registration form with message (if any)
     return render_template('register.html', msg=msg)
 
 @app.route("/ConfirmReg", methods=["GET", "POST"])
@@ -107,15 +115,26 @@ def ConfirmReg():
         elif not re.match(r'[A-Za-z0-9]+', username):
             msg = 'Username must contain only characters and numbers!'
         else:
-            client = boto3.client('cognito-idp', region_name='us-west-2')
-            response = client.confirm_sign_up(
+            try:
+                client = boto3.client('cognito-idp', region_name='us-west-2')
+                response = client.confirm_sign_up(
                  ClientId=CLIENT_ID,
                  SecretHash=get_secret_hash(username),
                  Username=username,
                  ConfirmationCode=code,
                  ForceAliasCreation=False,
-            ) 
-            return redirect(url_for("login"))
+                 ) 
+                return redirect(url_for("login"))
+            except client.exceptions.CodeMismatchException:
+                msg = 'Invalid Verification code'
+            except client.exceptions.UserNotFoundException:
+                msg= 'Username doesnt exists'
+            except client.exceptions.NotAuthorizedException:
+                msg = 'User is already confirmed'
+            except Exception as e:
+                msg = e
+                
+            
     return render_template("ConfirmReg.html",msg=msg)
     
 
